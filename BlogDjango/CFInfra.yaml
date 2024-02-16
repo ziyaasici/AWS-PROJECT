@@ -1,0 +1,422 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This Project Created for a 3 Layer DJango BLOG Page
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: ziya
+
+Resources:
+
+# ------------------------------------------
+# ------- VPC & SUBNET CONFIGURATIONS ------
+# ------------------------------------------
+
+  BlogVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.10.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: BlogVPC
+  
+  BlogPublicSubnet1A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BlogVPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.10.10.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: BlogPublicSubnet1A
+
+  BlogPrivateSubnet1A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BlogVPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.10.11.0/24
+      Tags:
+        - Key: Name
+          Value: BlogPrivateSubnet1A
+
+  BlogPublicSubnet1B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BlogVPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.10.20.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: BlogPublicSubnet1B
+
+  BlogPrivateSubnet1B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BlogVPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.10.21.0/24
+      Tags:
+        - Key: Name
+          Value: BlogPrivateSubnet1B
+
+  BlogInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Blog-IGW
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref BlogVPC
+      InternetGatewayId: !Ref BlogInternetGateway
+
+  BlogPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref BlogVPC
+      Tags:
+        - Key: Name
+          Value: BlogPublicRouteTable
+
+  BlogPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref BlogPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref BlogInternetGateway
+
+  BlogPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref BlogVPC
+      Tags:
+        - Key: Name
+          Value: BlogPrivateRouteTable
+
+  BlogPublicRouteTableAssociation1A:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref BlogPublicSubnet1A
+      RouteTableId: !Ref BlogPublicRouteTable
+
+  BlogPublicRouteTableAssociation1B:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref BlogPublicSubnet1B
+      RouteTableId: !Ref BlogPublicRouteTable
+
+  BlogPrivateRouteTableAssociation1A:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref BlogPrivateSubnet1A
+      RouteTableId: !Ref BlogPrivateRouteTable
+
+  BlogPrivateRouteTableAssociation1B:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref BlogPrivateSubnet1B
+      RouteTableId: !Ref BlogPrivateRouteTable
+
+  NATRouteforPrivate:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref BlogPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref NATIns
+
+# ------------------------------------------
+# --------- SEC GRP CONFIGURATIONS ---------
+# ------------------------------------------
+
+  ALBSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 80 - 443
+      GroupName: ALBSecGrp
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref BlogVPC
+
+  NATSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 22 - 80 - 443
+      GroupName: NATSecGrp
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref BlogVPC
+
+  EC2SecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 22 - ALBONLY(80 - 443)
+      GroupName: EC2SecGrp
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecGrp  
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ALBSecGrp  
+      VpcId: !Ref BlogVPC
+
+  RDSSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable MySQL access
+      GroupName: RDSSecGrp
+      VpcId: !Ref BlogVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2SecGrp  
+
+# # ------------------------------------------
+# # -------- RDS & S3 CONFIGURATIONS ---------
+# # ------------------------------------------
+
+  DBSubnetGrp:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref BlogPrivateSubnet1A
+        - !Ref BlogPrivateSubnet1B
+
+  BlogRDS:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBInstanceIdentifier: rds
+      Engine: mysql
+      EngineVersion: 8.0.28
+      DBInstanceClass: db.t2.micro
+      MasterUsername: admin
+      MasterUserPassword: Admin12345
+      AllocatedStorage: 20
+      DBSubnetGroupName: !Ref DBSubnetGrp
+      MultiAZ: false
+      VPCSecurityGroups: 
+        - !Ref RDSSecGrp
+      DBName: rds
+      AutoMinorVersionUpgrade: false
+
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: djangoblogs3bucket
+
+  # S3BucketPolicy:
+  #   Type: AWS::S3::BucketPolicy
+  #   Properties:
+  #     Bucket: !Ref S3Bucket
+  #     PolicyDocument:
+  #       Version: '2012-10-17'
+  #       Statement:
+  #         - Sid: PublicReadGetObject
+  #           Effect: Allow
+  #           Principal: '*'
+  #           Action: s3:GetObject
+  #           Resource: !Sub 'arn:aws:s3:::${S3Bucket}/*'
+
+# ------------------------------------------
+# ----------- NAT CONFIGURATIONS -----------
+# ------------------------------------------
+
+  NATIns:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-037eb9e678c1a8ed9
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref NATSecGrp
+      SubnetId: !Ref BlogPublicSubnet1A
+      SourceDestCheck: false
+      Tags: 
+        - Key: 'Name'
+          Value: 'NATIns'
+
+# ------------------------------------------
+# ----------- IAM CONFIGURATIONS -----------
+# ------------------------------------------
+
+  BlogEC2S3FullAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      RoleName: Blog_EC2_S3_Full_Access
+      Description: IAM role for EC2 instances with full access to S3
+
+  BlogEC2S3FullAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: BlogEC2S3FullAccessPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: 
+              - s3:*
+            Resource: "*"
+      Roles:
+        - Ref: BlogEC2S3FullAccessRole
+
+# ------------------------------------------
+# ----- LAUNCH TEMPLATE CONFIGURATIONS -----
+# ------------------------------------------
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: ami-06aa3f7caf3a30282
+        InstanceType: t2.micro
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref EC2SecGrp
+        IamInstanceProfile:
+          Arn: !GetAtt InstanceProfile.Arn
+        UserData: !Base64 |
+          #!/bin/bash
+          apt-get update -y
+          apt-get upgrade -y
+          apt-get install git -y
+          apt-get install python3 python3-pip python3-venv -y
+          apt-get install python3.8-dev default-libmysqlclient-dev -y
+          cd /home/ubuntu/
+          TOKEN=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
+          git clone https://$TOKEN@github.com/ziyaasici/AWS-Project.git
+          python3 -m venv venv
+          source venv/bin/activate
+          cd /home/ubuntu/AWS-Project/BlogDjango
+          pip3 install -r requirements.txt
+          cd /home/ubuntu/AWS-Project/BlogDjango/src
+          python3 manage.py makemigrations
+          python3 manage.py migrate
+          python3 manage.py runserver 0.0.0.0:80
+      LaunchTemplateName: LaunchTemplate
+      VersionDescription: 'v1'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BlogEC2S3FullAccessRole
+
+# ------------------------------------------
+# ------- LOADBALANCER CONFIGURATIONS ------
+# ------------------------------------------
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      SecurityGroups:
+        - !Ref ALBSecGrp
+      Scheme: internet-facing
+      Subnets: 
+        - !Ref BlogPublicSubnet1A
+        - !Ref BlogPublicSubnet1B
+      Type: application
+      Tags: 
+        - Key: 'Name'
+          Value: 'LoadBalancer'
+  
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGrp
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  HTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGrp
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+           - CertificateArn: arn:aws:acm:us-east-1:621627302500:certificate/146ad63e-1914-4958-b35f-69b1b0a031f0
+
+  TargetGrp:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref BlogVPC
+      Tags: 
+        - Key: 'Name'
+          Value: 'TargetGrp'
+
+# ------------------------------------------
+# ------- AUTO SCALING CONFIGURATIONS ------
+# ------------------------------------------
+
+  AutoScaling:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: BlogRDS
+    Properties:
+      DesiredCapacity: "2"
+      HealthCheckGracePeriod: 90
+      HealthCheckType: ELB
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MaxSize: "4" # Required
+      MinSize: "1" # Required
+      VPCZoneIdentifier: [!Ref BlogPrivateSubnet1A, !Ref BlogPrivateSubnet1B]
+      TargetGroupARNs:
+        - !Ref TargetGrp
+      Tags: 
+        - Key: 'Name'
+          Value: 'AutoScaling'
+          PropagateAtLaunch: true
